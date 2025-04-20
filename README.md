@@ -1,4 +1,4 @@
-# Moteur de Recherche Python
+# Moteur de recherche web minimaliste en Python
 
 Un moteur de recherche modulaire développé en Python, utilisant SQLite pour le stockage persistant des données.
 
