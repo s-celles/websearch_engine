@@ -1,0 +1,109 @@
+<!-- web_ui/templates/search.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Moteur de Recherche</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px; 
+        }
+        .search-box { 
+            margin: 30px 0; 
+            text-align: center; 
+        }
+        input[type="text"] { 
+            width: 70%; 
+            padding: 10px; 
+            border: 1px solid #ddd;
+            border-radius: 4px 0 0 4px;
+        }
+        button { 
+            padding: 10px 15px; 
+            background: #4285f4; 
+            color: white; 
+            border: none; 
+            border-radius: 0 4px 4px 0;
+            cursor: pointer;
+        }
+        .result { 
+            margin: 20px 0; 
+            padding: 10px; 
+            border-bottom: 1px solid #eee; 
+        }
+        .result h3 { 
+            margin: 0 0 5px 0; 
+        }
+        .result a { 
+            color: #1a0dab; 
+            text-decoration: none; 
+        }
+        .result .url { 
+            color: #006621; 
+            font-size: 0.8em; 
+            margin-bottom: 5px;
+        }
+        .result .score { 
+            color: #666; 
+            font-size: 0.8em; 
+        }
+        #results-container {
+            min-height: 200px;
+        }
+    </style>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchForm = document.getElementById('search-form');
+            const resultsContainer = document.getElementById('results-container');
+            
+            searchForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const query = document.getElementById('query').value;
+                
+                if (!query.trim()) return;
+                
+                resultsContainer.innerHTML = '<p>Recherche en cours...</p>';
+                
+                fetch(`/search?q=${encodeURIComponent(query)}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        resultsContainer.innerHTML = '';
+                        
+                        if (data.results.length === 0) {
+                            resultsContainer.innerHTML = '<p>Aucun résultat trouvé.</p>';
+                            return;
+                        }
+                        
+                        data.results.forEach(result => {
+                            const resultDiv = document.createElement('div');
+                            resultDiv.className = 'result';
+                            resultDiv.innerHTML = `
+                                <h3><a href="${result.url}" target="_blank">${result.title}</a></h3>
+                                <div class="url">${result.url}</div>
+                                <div class="score">Score: ${result.score.toFixed(4)}</div>
+                            `;
+                            resultsContainer.appendChild(resultDiv);
+                        });
+                    })
+                    .catch(error => {
+                        resultsContainer.innerHTML = `<p>Erreur: ${error.message}</p>`;
+                    });
+            });
+        });
+    </script>
+</head>
+<body>
+    <h1>Moteur de Recherche</h1>
+    
+    <div class="search-box">
+        <form id="search-form">
+            <input type="text" id="query" placeholder="Rechercher...">
+            <button type="submit">Rechercher</button>
+        </form>
+    </div>
+    
+    <div id="results-container"></div>
+</body>
+</html>
