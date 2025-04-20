@@ -1,80 +1,83 @@
-# indexer/indexer.py
-import re
+# searcher/searcher.py
+import math
+from collections import defaultdict
 import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem import PorterStemmer
-import sqlite3
 
-class Indexer:
-    def __init__(self, db_manager, language='french'):
+class SearchEngine:
+    def __init__(self, db_manager):
         self.db_manager = db_manager
-        
-        # Télécharger les ressources NLTK nécessaires
-        nltk.download('punkt', quiet=True)
-        nltk.download('stopwords', quiet=True)
-        
-        self.stemmer = PorterStemmer()
-        self.stop_words = set(stopwords.words(language))
+        # Créer un indexeur pour prétraiter les requêtes
+        from indexer.indexer import Indexer
+        self.query_processor = Indexer(db_manager)
     
-    def preprocess_text(self, text):
-        # Convertir en minuscules et tokeniser
-        tokens = word_tokenize(text.lower())
-        
-        # Supprimer la ponctuation et les chiffres
-        tokens = [re.sub(r'[^\w\s]', '', token) for token in tokens]
-        
-        # Supprimer les mots vides et appliquer le stemming
-        tokens = [self.stemmer.stem(token) for token in tokens 
-                 if token and token not in self.stop_words]
-        
-        return tokens
-    
-    def index_document(self, doc_id, content):
-        tokens = self.preprocess_text(content)
-        
-        # Calculer la fréquence des termes
-        term_freq = {}
-        for token in tokens:
-            if token in term_freq:
-                term_freq[token] += 1
-            else:
-                term_freq[token] = 1
-        
-        # Enregistrer dans la base de données
+    def get_total_documents(self):
         with self.db_manager.get_connection() as conn:
             cursor = conn.cursor()
-            for term, freq in term_freq.items():
-                try:
-                    cursor.execute(
-                        "INSERT INTO inverted_index (term, document_id, frequency) VALUES (?, ?, ?)",
-                        (term, doc_id, freq)
-                    )
-                except sqlite3.IntegrityError:
-                    # Mettre à jour si l'entrée existe déjà
-                    cursor.execute(
-                        "UPDATE inverted_index SET frequency = ? WHERE term = ? AND document_id = ?",
-                        (freq, term, doc_id)
-                    )
-            conn.commit()
+            cursor.execute("SELECT COUNT(*) FROM documents")
+            return cursor.fetchone()[0]
     
-    def build_index(self):
+    def search(self, query, top_k=10):
+        # Prétraiter la requête
+        query_terms = self.query_processor.preprocess_text(query)
+        
+        if not query_terms:
+            return []
+        
+        total_documents = self.get_total_documents()
+        if total_documents == 0:
+            return []
+        
+        # Calculer les scores TF-IDF
+        scores = defaultdict(float)
+        
         with self.db_manager.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Récupérer tous les documents non encore indexés
-            cursor.execute("""
-                SELECT d.id, d.content 
-                FROM documents d 
-                LEFT JOIN inverted_index i ON d.id = i.document_id 
-                WHERE i.id IS NULL
-                GROUP BY d.id
-            """)
+            for term in query_terms:
+                # Trouver les documents contenant ce terme
+                cursor.execute("""
+                    SELECT document_id, frequency, 
+                           (SELECT COUNT(*) FROM documents) as total_docs,
+                           (SELECT COUNT(*) FROM inverted_index WHERE term = ?) as term_docs
+                    FROM inverted_index 
+                    WHERE term = ?
+                """, (term, term))
+                
+                results = cursor.fetchall()
+                
+                if results:
+                    # Pour chaque document contenant le terme
+                    for doc_id, term_freq, total_docs, term_docs in results:
+                        # Calculer IDF (Inverse Document Frequency)
+                        idf = math.log(total_docs / term_docs) if term_docs > 0 else 0
+                        
+                        # Pour calculer TF, nous avons besoin de la longueur du document
+                        cursor.execute("""
+                            SELECT LENGTH(content) 
+                            FROM documents 
+                            WHERE id = ?
+                        """, (doc_id,))
+                        
+                        doc_length = cursor.fetchone()[0]
+                        if doc_length > 0:
+                            # Calculer TF (Term Frequency)
+                            tf = term_freq / doc_length
+                            # Ajouter le score TF-IDF
+                            scores[doc_id] += tf * idf
             
-            documents = cursor.fetchall()
+            # Récupérer les informations sur les documents avec les meilleurs scores
+            ranked_results = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
             
-        for doc_id, content in documents:
-            print(f"Indexation du document {doc_id}...")
-            self.index_document(doc_id, content)
+            results = []
+            for doc_id, score in ranked_results:
+                cursor.execute("SELECT url, title FROM documents WHERE id = ?", (doc_id,))
+                url, title = cursor.fetchone()
+                
+                results.append({
+                    'id': doc_id,
+                    'url': url,
+                    'title': title,
+                    'score': score
+                })
         
-        return len(documents)
+        return results
